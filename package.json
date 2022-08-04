@@ -1,0 +1,23 @@
+{
+  "name": "converter",
+  "version": "0.0.1",
+  "description": "Audio file converter and uploader",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^0.27",
+    "body-parser": "^1",
+    "bullmq": "^1",
+    "cors": "^2",
+    "express": "^4",
+    "ioredis": "^5",
+    "nanoid": "^4",
+    "serialize-error": "^11",
+    "tempy": "^3",
+    "wildcard-match": "^5"
+  }
+}
