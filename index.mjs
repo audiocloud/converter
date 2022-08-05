@@ -34,75 +34,59 @@ const worker = new Worker(
       input_format,
       output_format,
       output_codec,
-      output_channels,
       output_sample_rate,
       output_bit_depth,
+      output_bit_rate,
+      output_dither,
+      output_name,
       output_url,
       notify_url,
       context
     } = job.data
 
-    const new_file_meta = {}
+    // engine output 192k float 32-bit
+    // if user chooses same, redirect to presigned get s pravim content dispositionom (filename etc)
+    // choose dither (toggle)
+
+    // -o stdout > stream to user on http response > header content disposition 
+
+    // lahko probaš tudi input brez downloadat (problem z infinite wav file?)
+
+    // request > download > ffmpeg > output v stream > if error > zbrišeš > if no error, all good
 
     await temporaryFileTask(
-      async (input_loc) => {
-        await temporaryFileTask(
-          async (output_loc) => {
-            await download(input_url, input_loc)
+      async(temp_loc) => {
 
-            // request > download > ffmpeg > stream v output > if error > zbrišeš > if no error, all good
-
-            console.log('----- download finished -----')
-
-            const {
-              sample_rate: org_sample_rate,
-              channels: org_channels,
-              bit_depth: org_bit_depth,
-              duration: org_duration,
-              duration_in_samples: org_duration_in_samples,
-              time_base: org_time_base,
-              format_name: org_format_name,
-              codec_name: org_codec_name
-            } = await get_metadata(input_loc)
-
-            console.log('----- original file meta read -----')
-
-            await convert_and_create()
-
-            console.log('----- new file created -----')
-
-            const {
-              sample_rate: new_sample_rate,
-              channels: new_channels,
-              bit_depth: new_bit_depth,
-              duration: new_duration,
-              duration_in_samples: new_duration_in_samples,
-              time_base: new_time_base,
-              format_name: new_format_name,
-              codec_name: new_codec_name
-            } = await get_metadata(output_loc)
-
-            new_file_meta.sample_rate = new_sample_rate
-            new_file_meta.channels = new_channels
-            new_file_meta.bit_depth = new_bit_depth
-            new_file_meta.duration = new_duration
-            new_file_meta.duration_in_samples = new_duration_in_samples
-            new_file_meta.time_base = new_time_base
-            new_file_meta.format_name = new_format_name
-            new_file_meta.codec_name = new_codec_name
-
-            console.log('----- new file meta set -----')
-
-            await upload(output_loc, output_url)
-
-            console.log('----- upload finished -----')
-          },
-          { extension: output_format }
+        const result = await convert_and_create(
+          input_url,
+          input_format,
+          output_format,
+          output_codec,
+          output_sample_rate,
+          output_bit_depth,
+          output_bit_rate,
+          output_dither,
+          output_name,
+          output_url,
+          notify_url,
+          context,
+          temp_loc
         )
-      },
-      { extension: input_format }
+        
+        if (result.success) {
+          console.log('----- temporary converted file created -----')
+          
+          // send input_loc to browser
+          
+        } else {
+          console.log(result.message)
+        }
+
+
+      }
     )
-    await notify(notify_url, job.id, context, new_file_meta, null)
+
+    await notify(notify_url, job.id, context, null)
   },
   { concurrency: parseInt(process.env.CONCURRENCY || "10"), connection }
 )
@@ -112,98 +96,67 @@ worker.on("failed", (job, error) => {
   notify(job.data.notify_url, job.id, job.data.context, error).catch(() => {})
 })
 
-async function upload(path, url) {
-  console.log("uploading")
-  console.table({ path, url })
-  await axios({
-    url,
-    method: "put",
-    data: fs.createReadStream(path),
-    headers: { "content-type": "application/octet-stream" },
-  })
-}
+async function convert_and_stream (
+  input_url,
+  input_format,
+  output_format,
+  output_codec,
+  output_sample_rate,
+  output_bit_depth,
+  output_bit_rate,
+  output_name,
+  output_url,
+  notify_url,
+  context,
+  temp_loc) {
 
-async function download(url, path) {
-  console.log("downloading")
-  console.table({ url, path })
+  console.log('convert_and_stream')
 
-  const source = await axios.get(url, { responseType: "stream" })
-  const writer = fs.createWriteStream(path)
-  source.data.pipe(writer)
+  const codec = `-acodec ${output_codec}`
+  
+  let bit_depth = ''
+  if (codec === flac && output_bit_depth === 16) bit_depth = '-sample_fmt s16' // 16-bit
+  if (codec === flac && output_bit_depth === 24) bit_depth = '-sample_fmt s32' // 24-bit
+  
+  let bit_rate = ''
+  if (format === 'mp3') bit_rate = `-aq ${output_bit_rate}`
+
+  const sample_rate = `-af aresample=resampler=soxr -precision 28 -ar ${output_sample_rate}`
+
+  let dither = ''
+  let dither_in_filename = ''
+  if (output_dither) {
+    dither = '-dither_method shibata -precision 28' // shibata onyl available for 44.1k and 48k > fallback to triangular hp dither
+    dither_in_filename = '-dither'
+  }
+
+  const filename = `${output_name}-${output_sample_rate}-${output_bit_depth}${output_bit_rate}${dither_in_filename}`
+
+  const command = `ffmpeg -i ${input_url} -map_metadata -1 -map 0 -map -0:v -c:a ${codec} ${sample_fmt} ${bit_rate} ${sample_rate} ${dither} ${filename}.${output_format}`
+
+  const promisifyExec = promisify(exec)
+  const { stdout, stderr } = await promisifyExec(command)
+
+  // how to check stderr
+
+  const writer = fs.createWriteStream(temp_loc)
+  stdout.data.pipe(writer)
 
   return new Promise((resolve, reject) => {
     let error = null
     writer.on("error", (err) => {
       error = err
       writer.close()
-      reject(err)
+      reject({
+        success: false,
+        message: error.message
+      })
     })
 
     writer.on("finish", () => {
-      if (!error) {
-        resolve(true)
-      }
+      if (!error) resolve({ success: true })
     })
   })
-}
-
-async function get_metadata (input_loc) {
-  console.log("getting file metadata")
-
-  const promisifyExec = promisify(exec)
-
-  const { stdout, stderr } = await promisifyExec(`ffprobe -print_format json -show_format -show_streams -select_streams a -i ${input_loc}`)
-  
-  console.log('--------------------------------------------')
-  const ffprobe_result = JSON.parse(stdout)
-  // console.log('ffprobe_result:', ffprobe_result)
-  // console.log('--------------------------------------------')
-
-  if (ffprobe_result.streams.length < 1) {
-    throw Error('No audio streams found.')
-
-  } else {
-
-    const meta = {
-      sample_rate:          parseInt(ffprobe_result.streams[0].sample_rate),
-      channels:             ffprobe_result.streams[0].channels,
-      duration:             parseFloat(ffprobe_result.streams[0].duration),
-      time_base:            ffprobe_result.streams[0].time_base,
-      format_name:          ffprobe_result.format.format_name,
-      codec_name:           ffprobe_result.streams[0].codec_name
-    }
-    
-    if (ffprobe_result.streams[0].bits_per_sample === 0) meta.bit_depth = null
-    else meta.bit_depth = ffprobe_result.streams[0].bits_per_sample
-
-    meta.duration_in_samples = Number(BigInt(ffprobe_result.streams[0].duration_ts) * BigInt(meta.sample_rate) / BigInt(meta.time_base.split('/').pop()))
-
-    const allowedFormatNames = ['flac', 'wav', 'mp3']
-    const allowedCodecNames = ['flac', 'pcm_s16le', 'pcm_s16be', 'pcm_s24le', 'pcm_s32le', 'pcm_f32le', 'mp3']
-
-    if (meta.channels > 2) throw Error('More than 2 channels not allowed.')
-    if (!allowedFormatNames.find(element => element === meta.format_name)) throw Error(`Bad format: ${meta.format_name}`)
-    if (!allowedCodecNames.find(element => element === meta.codec_name)) throw Error(`Bad codec: ${meta.codec_name}`)
-
-    console.log('meta:', meta)
-
-    return meta
-  }
-}
-
-async function convert_and_create (input_url, input_format, output_format, output_codec, output_channels, output_sample_rate, output_bit_depth, output_bit_rate, output_url, notify_url, context) {
-  console.log('create_download')
-
-  const promisifyExec = promisify(exec)
-
-  if (output_format === 'mp3') {
-    const { stdout, stderr } = await promisifyExec(
-      `ffmpeg -i ${input_loc} -ar ${output_sample_rate} -aq ${output_bit_rate} -ac ${output_channels} -acodec ${output_codec} ${context.objectId}.${output_format}`)
-      
-  } else {
-    const { stdout, stderr } = await promisifyExec(
-      `ffmpeg -i ${input_loc} -ar ${output_sample_rate}                        -ac ${output_channels} -acodec ${output_codec} ${context.objectId}.${output_format}`)
-  }
 }
 
 async function notify(url, id, context, meta, err) {
@@ -237,6 +190,7 @@ app.post("/v1/convert-and-create", (req, res, next) => {
     output_channels,
     output_sample_rate,
     output_bit_depth,
+    output_bit_rate,
     output_url,
     notify_url,
     context
@@ -274,14 +228,20 @@ app.post("/v1/convert-and-create", (req, res, next) => {
   }
 
   if (output_sample_rate !== 441000 && output_sample_rate !== 48000 && output_sample_rate !== 88200 && output_sample_rate !== 96000 && output_sample_rate !== 192000) {
+    throw new Error("Sample rate is not valid");
+  }
+
+  if (output_format !== 'mp3' && output_bit_depth !== 16 && output_bit_depth !== 24) {
     throw new Error("Bit depth is not valid");
   }
 
-  // To check:
-  //
-  // output_codec,
-  // output_bit_depth,
+  if (output_codec !== 'flac' && output_codec !== 'pcm_s16le' && output_codec !== 'pcm_s32le' && output_codec !== 'mp3') {
+    throw new Error("Codec is not valid");
+  }
 
+  if (output_format === 'mp3' && output_bit_rate !== '320') {
+    throw new Error("Bit rate is not valid");
+  }
 
   queue
     .add(
@@ -294,6 +254,7 @@ app.post("/v1/convert-and-create", (req, res, next) => {
         output_channels,
         output_sample_rate,
         output_bit_depth,
+        output_bit_rate,
         output_url,
         notify_url,
         context
