@@ -3,12 +3,11 @@ import process from "process"
 import wmatch from "wildcard-match"
 import body_parser from "body-parser"
 import cors from "cors"
-// import { temporaryFile, temporaryFileTask } from "tempy"
+import tempfile from 'tempfile'
 import { promisify } from "util"
 import { exec } from "child_process"
 import fs from "fs"
-
-// dynamic import({ temporaryFile, temporaryFileTask} from 'tempy')
+import { pipeline } from "stream"
 
 const app = Express()
 const port = process.env.PORT || 3000
@@ -66,9 +65,9 @@ app.post("/v1/convert", async (req, res, next) => {
   
     console.log('1 ----- setting up conversion command')
 
-    let codec = `-acodec ${output_format}`
-    if (output_format === 'wav' && output_bit_depth === 16) codec = 'pcm_s16le'
-    if (output_format === 'wav' && output_bit_depth === 24) codec = 'pcm_s32le'
+    let codec = `-c:a ${output_format}`
+    if (output_format === 'wav' && output_bit_depth === 16) codec = '-c:a pcm_s16le'
+    if (output_format === 'wav' && output_bit_depth === 24) codec = '-c:a pcm_s32le'
     
     let bit_depth = ''
     if (output_format === 'flac' && output_bit_depth === 16) bit_depth = '-sample_fmt s16' // 16-bit
@@ -85,22 +84,25 @@ app.post("/v1/convert", async (req, res, next) => {
       dither = '-dither_method shibata' // shibata onyl available for 44.1k and 48k > fallback to triangular hp dither
       dither_in_filename = '-dither'
     }
+
+    const temp_file = tempfile(`.${output_format}`)
   
     const filename = `${input_name}-${output_sample_rate}-${output_bit_depth}${output_bit_rate}${dither_in_filename}`
   
     console.log('------------------------')
     console.log('Command settings:')
-    console.log('input url:  ', input_url)
+    console.log('input_url:  ', input_url)
     console.log('codec:      ', codec)
-    console.log('bit depth:  ', bit_depth)
-    console.log('bit rate:   ', bit_rate)
-    console.log('sample rate:', sample_rate)
+    console.log('bit_depth:  ', bit_depth)
+    console.log('bit_rate:   ', bit_rate)
+    console.log('sample_rate:', sample_rate)
     console.log('dither:     ', dither)
     console.log('filename:   ', filename)
-    console.log('out format: ', output_format)
+    console.log('out_format: ', output_format)
     console.log('------------------------')
 
-    const command = `ffmpeg -i "${input_url}" -map_metadata -1 -map 0 -map -0:v -c:a ${codec} ${bit_depth} ${bit_rate} ${sample_rate} ${dither} ${filename}.${output_format}`
+    // const command = `ffmpeg -i "${input_url}" -map_metadata -1 -map 0 -map -0:v -c:a ${codec} ${bit_depth} ${bit_rate} ${sample_rate} ${dither} ${filename}.${output_format}`
+    const command = `ffmpeg -i "${input_url}" -map_metadata -1 -map 0 -map -0:v ${codec} ${bit_depth} ${bit_rate} ${sample_rate} ${dither} ${temp_file}`
 
     // RUN COMMAND
 
@@ -139,15 +141,20 @@ app.post("/v1/convert", async (req, res, next) => {
     //       success: true,
     //       message: 'Piping finished with no error.'
     //     })
-
-    //     // res.setHeader('status', 201)
-    //     // res.setHeader('Content-Length', ???)
-    //     // res.setHeader('Content-Type', 'audio/mpeg')
-    //     // res.setHeader('Content-Disposition', `attachment filename=${something}`)
-    //     // res.write(file, 'binary')
-    //     // res.end()
     //   }
     // })
+
+    
+    console.log('Responding...')
+    
+    res.status(201)
+    res.setHeader('Content-Type', `audio/${output_format}`)
+    res.setHeader('Content-Disposition', `attachment filename=${filename}.${output_format}`)
+    // res.setHeader('Content-Length', ???)
+    
+    // const filestream = fs.createReadStream(temp_file).pipe(res)
+
+    res.end()
 
   } catch (error) {
     console.log(error.message)
