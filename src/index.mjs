@@ -118,41 +118,27 @@ app.post("/v1/convert", async (req, res, next) => {
     console.log('------------------------')
 
     // how to check stderr
-  
-    // console.log('3 ----- piping stdout to writer')
-  
-    // const writer = fs.createWriteStream(temp_loc)
-    // const writer = fs.createWriteStream('something')
-
-    // stdout.data.pipe(writer) // should this happen last?
-
-    // let errorMessage = ''
-
-    // writer.on("error", (err) => {
-    //   errorMessage = err.message
-    //   writer.close()
-    //   throw Error (errorMessage)
-    // })
-
-    // writer.on("finish", () => {
-    //   if (errorMessage === '') {
-
-    //     res.status(201).json({
-    //       success: true,
-    //       message: 'Piping finished with no error.'
-    //     })
-    //   }
-    // })
-
     
+    const headers = {
+      'Content-Type': `audio/${output_format}`,
+      'Content-Disposition': `attachment; filename="${filename}.${output_format}"`,
+      // 'Content-Length': Buffer.byteLength(temp_file)
+    }
+
+    console.log('Setting headers:', headers)
+
     console.log('Responding...')
+
+    res.writeHead(201, headers)    
+    const readStream = fs.createReadStream(temp_file)
     
-    res.status(201)
-    res.setHeader('Content-Type', `audio/${output_format}`)
-    res.setHeader('Content-Disposition', `attachment filename=${filename}.${output_format}`)
-    // res.setHeader('Content-Length', ???)
-    
-    // const filestream = fs.createReadStream(temp_file).pipe(res)
+    readStream.on('error', () => {
+      console.log('--------- STREAM ERROR ---------')
+    })
+    readStream.on('open', () => {
+      console.log('----- Read stream open, now piping... -----')
+      readStream.pipe(res)
+    })
 
     res.end()
 
