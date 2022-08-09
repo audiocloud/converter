@@ -24,7 +24,17 @@ function is_url_valid(url) {
 app.use(body_parser.json())
 app.use(cors())
 
-app.post("/v1/convert", async (req, res, next) => {
+app.get("/v1/convert", async (req, res, next) => {
+
+  const { encodedParams } = req.query
+
+  const decodeBase64 = (data) => {
+    return Buffer.from(data, 'base64').toString('ascii')
+  }
+
+  const decodedParams = decodeBase64(encodedParams)
+  const parsedParams = JSON.parse(decodedParams)
+
   const {
     input_url,
     input_format,
@@ -35,9 +45,7 @@ app.post("/v1/convert", async (req, res, next) => {
     output_bit_depth,
     output_bit_rate,
     output_dither,
-  } = req.body
-  
-  console.log('Request body:', req.body)
+  } = parsedParams
 
   try {
 
@@ -57,7 +65,10 @@ app.post("/v1/convert", async (req, res, next) => {
       output_sample_rate !== 88200 &&
       output_sample_rate !== 96000 &&
       output_sample_rate !== 192000)                                                        throw new Error("Output sample rate is not valid")
-    if (output_format !== 'mp3' && output_bit_depth !== 16 && output_bit_depth !== 24)      throw new Error("Output bit depth is not valid")
+    if (
+      output_format !== 'mp3' &&
+      output_bit_depth !== 16 &&
+      output_bit_depth !== 24)                                                              throw new Error("Output bit depth is not valid")
     if (output_format === 'mp3' && output_bit_rate !== '320')                               throw new Error("Output bit rate is not valid")
     if (typeof output_dither !== 'boolean')                                                 throw new Error("Output dither is not valid")
 
@@ -81,7 +92,7 @@ app.post("/v1/convert", async (req, res, next) => {
     let dither = ''
     let dither_in_filename = ''
     if (output_dither) {
-      dither = '-dither_method shibata' // shibata onyl available for 44.1k and 48k > fallback to triangular hp dither
+      dither = '-dither_method shibata' // shibata onyl available for 44.1k and 48k > fallback to triangular hp dither ???
       dither_in_filename = '-dither'
     }
 
