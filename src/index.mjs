@@ -7,7 +7,7 @@ import tempfile from 'tempfile'
 import { promisify } from "util"
 import { exec } from "child_process"
 import fs from "fs"
-import { pipeline } from "stream"
+import contentDisposition from "content-disposition"
 
 const app = Express()
 const port = process.env.PORT || 3000
@@ -101,7 +101,6 @@ app.post("/v1/convert", async (req, res, next) => {
     console.log('out_format: ', output_format)
     console.log('------------------------')
 
-    // const command = `ffmpeg -i "${input_url}" -map_metadata -1 -map 0 -map -0:v -c:a ${codec} ${bit_depth} ${bit_rate} ${sample_rate} ${dither} ${filename}.${output_format}`
     const command = `ffmpeg -i "${input_url}" -map_metadata -1 -map 0 -map -0:v ${codec} ${bit_depth} ${bit_rate} ${sample_rate} ${dither} ${temp_file}`
 
     // RUN COMMAND
@@ -118,16 +117,18 @@ app.post("/v1/convert", async (req, res, next) => {
     console.log('------------------------')
 
     // how to check stderr
+
+    const file_stats = await fs.promises.stat(temp_file)
     
     const headers = {
       'Content-Type': `audio/${output_format}`,
-      'Content-Disposition': `attachment; filename="${filename}.${output_format}"`,
-      // 'Content-Length': Buffer.byteLength(temp_file)
+      'Content-Disposition': contentDisposition(`${filename}.${output_format}`),
+      'Content-Length': file_stats.size
     }
 
-    console.log('Setting headers:', headers)
+    console.log('Headers set:', headers)
 
-    console.log('Responding...')
+    console.log('Creating stream...')
 
     res.writeHead(201, headers)    
     const readStream = fs.createReadStream(temp_file)
@@ -136,12 +137,17 @@ app.post("/v1/convert", async (req, res, next) => {
       console.log('--------- STREAM ERROR ---------')
     })
     readStream.on('open', () => {
-      console.log('----- Read stream open, now piping... -----')
+      console.log('Read stream open...')
+      console.log('Piping...')
       readStream.pipe(res)
     })
-
-    res.end()
-
+    
+    readStream.on('close', () => {
+      console.log('Read stream closing...')
+      console.log('Ending response...')
+      res.end()
+    })
+    
   } catch (error) {
     console.log(error.message)
     res.status(500).json({
